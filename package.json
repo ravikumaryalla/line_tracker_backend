@@ -1,0 +1,17 @@
+{
+  "name": "lending-collection-backend",
+  "version": "1.0.0",
+  "description": "Express + SQLite backend for the Lending Collection App",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node src/db/seed.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}
