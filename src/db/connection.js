@@ -1,9 +1,13 @@
-const path = require('path');
-const Database = require('better-sqlite3');
+require('dotenv').config();
+const { Pool } = require('pg');
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, '..', '..', 'data.sqlite3');
-const db = new Database(dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is not set. Copy .env.example to .env and fill in your Postgres connection string.');
+}
 
-module.exports = db;
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
+module.exports = pool;

@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
-require('./db/schema');
-require('./db/seed');
+const { ensureSchema } = require('./db/schema');
+const seed = require('./db/seed');
 
 const agentsRouter = require('./routes/agents');
 const villagesRouter = require('./routes/villages');
@@ -29,4 +29,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Lending Collection backend listening on http://localhost:${PORT}`));
+
+async function start() {
+  await ensureSchema();
+  await seed();
+  app.listen(PORT, () => console.log(`Lending Collection backend listening on http://localhost:${PORT}`));
+}
+
+start().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});

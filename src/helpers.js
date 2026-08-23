@@ -1,24 +1,28 @@
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function serializeCustomer(db, c) {
+async function serializeCustomer(pool, c) {
   const missed = JSON.parse(c.missed_weeks || '[]');
   const partial = JSON.parse(c.partial_weeks || '{}');
   const partialSum = Object.values(partial).reduce((a, b) => a + b, 0);
   const paid = c.weeks_paid * c.weekly_amount + partialSum;
   const total = c.total_weeks * c.weekly_amount;
-  const paidToday = db.prepare(
-    "SELECT COALESCE(SUM(amount), 0) s FROM payments WHERE customer_id = ? AND paid_on = date('now')"
-  ).get(c.id).s;
-  const village = c.village_id ? db.prepare('SELECT name FROM villages WHERE id = ?').get(c.village_id) : null;
+
+  const paidTodayRow = await pool.query(
+    "SELECT COALESCE(SUM(amount), 0) s FROM payments WHERE customer_id = $1 AND paid_on = CURRENT_DATE",
+    [c.id]
+  );
+  const paidToday = Number(paidTodayRow.rows[0].s);
+
+  let villageName = null;
+  if (c.village_id) {
+    const v = await pool.query('SELECT name FROM villages WHERE id = $1', [c.village_id]);
+    villageName = v.rows[0] ? v.rows[0].name : null;
+  }
 
   return {
     id: c.id,
     name: c.name,
     phone: c.phone,
     address: c.address,
-    village: village ? village.name : null,
+    village: villageName,
     villageId: c.village_id,
     agentId: c.agent_id,
     given: c.given_amount,
@@ -52,4 +56,4 @@ function serializeTimeline(customer) {
   return tl;
 }
 
-module.exports = { today, serializeCustomer, serializeTimeline };
+module.exports = { serializeCustomer, serializeTimeline };

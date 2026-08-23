@@ -1,15 +1,16 @@
 # Lending Collection App — Backend
 
-Express + SQLite API for the Lending Collection App (agent field-collection app + admin dashboard).
+Express + PostgreSQL API for the Lending Collection App (agent field-collection app + admin dashboard).
 
 ## Run
 
 ```
 npm install
-npm start        # http://localhost:4000
+cp .env.example .env   # fill in DATABASE_URL with your Postgres connection string
+npm start               # http://localhost:4000
 ```
 
-The database (`data.sqlite3`) is created and seeded automatically on first run.
+Tables are created (`CREATE TABLE IF NOT EXISTS`) and seeded with demo data automatically on first run against an empty database.
 
 ## API
 

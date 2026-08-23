@@ -1,10 +1,11 @@
-const db = require('./schema');
+const pool = require('./connection');
+const { ensureSchema } = require('./schema');
 
 const AGENTS = [
-  { name: 'Mani Selvam', phone: '90000 00001', active: 1 },
-  { name: 'Ashok Kumar', phone: '90000 00002', active: 1 },
-  { name: 'Rekha Devi', phone: '90000 00003', active: 1 },
-  { name: 'Vijay Anand', phone: '90000 00004', active: 0 }
+  { name: 'Mani Selvam', phone: '90000 00001', active: true },
+  { name: 'Ashok Kumar', phone: '90000 00002', active: true },
+  { name: 'Rekha Devi', phone: '90000 00003', active: true },
+  { name: 'Vijay Anand', phone: '90000 00004', active: false }
 ];
 
 const VILLAGES = [
@@ -44,61 +45,65 @@ const LOSSES = [
   ['Sundari K', 'Sathur', 'Rekha Devi', 3000, 1000, 'Family moved to Chennai']
 ];
 
-function seed() {
-  const already = db.prepare('SELECT COUNT(*) c FROM agents').get().c;
-  if (already > 0) {
+async function seed() {
+  await ensureSchema();
+
+  const already = (await pool.query('SELECT COUNT(*) c FROM agents')).rows[0].c;
+  if (Number(already) > 0) {
     console.log('Database already seeded, skipping.');
     return;
   }
 
-  const insertAgent = db.prepare('INSERT INTO agents (name, phone, active) VALUES (?, ?, ?)');
   const agentIds = {};
   for (const a of AGENTS) {
-    const info = insertAgent.run(a.name, a.phone, a.active);
-    agentIds[a.name] = info.lastInsertRowid;
+    const { rows } = await pool.query('INSERT INTO agents (name, phone, active) VALUES ($1, $2, $3) RETURNING id', [a.name, a.phone, a.active]);
+    agentIds[a.name] = rows[0].id;
   }
 
-  const insertVillage = db.prepare('INSERT INTO villages (name, agent_id) VALUES (?, ?)');
   const villageIds = {};
   for (const v of VILLAGES) {
-    const info = insertVillage.run(v.name, agentIds[v.agent]);
-    villageIds[v.name] = info.lastInsertRowid;
+    const { rows } = await pool.query('INSERT INTO villages (name, agent_id) VALUES ($1, $2) RETURNING id', [v.name, agentIds[v.agent]]);
+    villageIds[v.name] = rows[0].id;
   }
 
-  const insertCustomer = db.prepare(`
-    INSERT INTO customers (name, phone, address, village_id, agent_id, given_amount, weekly_amount, total_weeks, weeks_paid, missed_weeks, partial_weeks)
-    VALUES (@name, @phone, @address, @village_id, @agent_id, @given, @weekly, @weeks, @done, @missed, @partial)
-  `);
   const custIds = {};
   for (const [name, phone, village, address, given, weekly, weeks, done, missed, partial] of CUSTOMERS) {
-    const villageAgentId = db.prepare('SELECT agent_id FROM villages WHERE id = ?').get(villageIds[village]).agent_id;
-    const info = insertCustomer.run({
-      name, phone, address, village_id: villageIds[village], agent_id: villageAgentId,
-      given, weekly, weeks, done, missed: JSON.stringify(missed), partial: JSON.stringify(partial)
-    });
-    custIds[name] = info.lastInsertRowid;
+    const villageAgentId = (await pool.query('SELECT agent_id FROM villages WHERE id = $1', [villageIds[village]])).rows[0].agent_id;
+    const { rows } = await pool.query(
+      `INSERT INTO customers (name, phone, address, village_id, agent_id, given_amount, weekly_amount, total_weeks, weeks_paid, missed_weeks, partial_weeks)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+      [name, phone, address, villageIds[village], villageAgentId, given, weekly, weeks, done, JSON.stringify(missed), JSON.stringify(partial)]
+    );
+    custIds[name] = rows[0].id;
   }
 
-  // Simulate today's collections already made by the lead agent, matching the mock's paidToday state.
+  // Simulate today's collections already made by the lead agent, matching the source mock's paidToday state.
   const paidTodayNames = ['Ravi Kumar', 'Suresh Babu', 'Lakshmi Devi', 'Devi Priya', 'Anand Raj', 'Selvi M', 'Ganesh K', 'Priya Ram'];
-  const insertPayment = db.prepare('INSERT INTO payments (customer_id, week_number, amount, note, paid_on) VALUES (?, ?, ?, ?, date(\'now\'))');
   for (const name of paidTodayNames) {
-    const c = db.prepare('SELECT * FROM customers WHERE id = ?').get(custIds[name]);
-    insertPayment.run(c.id, c.weeks_paid + 1, c.weekly_amount, null);
-    db.prepare('UPDATE customers SET weeks_paid = weeks_paid + 1 WHERE id = ?').run(c.id);
+    const { rows } = await pool.query('SELECT * FROM customers WHERE id = $1', [custIds[name]]);
+    const c = rows[0];
+    await pool.query(
+      "INSERT INTO payments (customer_id, week_number, amount, note, paid_on) VALUES ($1, $2, $3, NULL, CURRENT_DATE)",
+      [c.id, c.weeks_paid + 1, c.weekly_amount]
+    );
+    await pool.query('UPDATE customers SET weeks_paid = weeks_paid + 1 WHERE id = $1', [c.id]);
   }
 
-  const insertExpense = db.prepare('INSERT INTO expenses (agent_id, category, amount, note, expense_date) VALUES (?, ?, ?, ?, ?)');
   for (const [agent, cat, amt, date, note] of EXPENSES) {
-    insertExpense.run(agentIds[agent], cat, amt, note, date);
+    await pool.query('INSERT INTO expenses (agent_id, category, amount, note, expense_date) VALUES ($1, $2, $3, $4, $5)', [agentIds[agent], cat, amt, note, date]);
   }
 
-  const insertLoss = db.prepare('INSERT INTO losses (customer_name, village, agent_name, remaining, recovered, reason) VALUES (?, ?, ?, ?, ?, ?)');
   for (const [name, village, agent, remaining, recovered, reason] of LOSSES) {
-    insertLoss.run(name, village, agent, remaining, recovered, reason);
+    await pool.query('INSERT INTO losses (customer_name, village, agent_name, remaining, recovered, reason) VALUES ($1, $2, $3, $4, $5, $6)', [name, village, agent, remaining, recovered, reason]);
   }
 
   console.log('Seed complete.');
 }
 
-seed();
+if (require.main === module) {
+  seed()
+    .then(() => pool.end())
+    .catch((err) => { console.error(err); process.exit(1); });
+}
+
+module.exports = seed;

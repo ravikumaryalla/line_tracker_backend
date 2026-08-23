@@ -1,22 +1,27 @@
 const express = require('express');
-const db = require('../db/connection');
+const pool = require('../db/connection');
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
-  res.json(db.prepare('SELECT * FROM losses ORDER BY created_at DESC').all());
+router.get('/', async (req, res, next) => {
+  try {
+    res.json((await pool.query('SELECT * FROM losses ORDER BY created_at DESC')).rows);
+  } catch (err) { next(err); }
 });
 
-router.post('/', (req, res) => {
-  const { customerName, village, agentName, remaining, recovered, reason } = req.body;
-  if (!customerName || !remaining) {
-    return res.status(400).json({ error: 'customerName and remaining are required' });
-  }
-  const info = db.prepare(`
-    INSERT INTO losses (customer_name, village, agent_name, remaining, recovered, reason)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(customerName, village || null, agentName || null, remaining, recovered || 0, reason || 'Not recoverable');
-  res.status(201).json(db.prepare('SELECT * FROM losses WHERE id = ?').get(info.lastInsertRowid));
+router.post('/', async (req, res, next) => {
+  try {
+    const { customerName, village, agentName, remaining, recovered, reason } = req.body;
+    if (!customerName || !remaining) {
+      return res.status(400).json({ error: 'customerName and remaining are required' });
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO losses (customer_name, village, agent_name, remaining, recovered, reason)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [customerName, village || null, agentName || null, remaining, recovered || 0, reason || 'Not recoverable']
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) { next(err); }
 });
 
 module.exports = router;
