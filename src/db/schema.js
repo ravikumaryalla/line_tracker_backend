@@ -61,6 +61,23 @@ async function ensureSchema() {
       reason TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'agent' CHECK (role IN ('admin', 'agent')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+      active BOOLEAN NOT NULL DEFAULT true,
+      agent_id INTEGER REFERENCES agents(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      approved_at TIMESTAMPTZ,
+      approved_by INTEGER REFERENCES users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+    CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
   `);
 }
 

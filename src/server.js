@@ -2,7 +2,11 @@ const express = require('express');
 const cors = require('cors');
 const { ensureSchema } = require('./db/schema');
 const seed = require('./db/seed');
+const bootstrapAdmin = require('./db/bootstrapAdmin');
+const { requireAuth, requireRole } = require('./middleware/auth');
 
+const authRouter = require('./routes/auth');
+const usersRouter = require('./routes/users');
 const agentsRouter = require('./routes/agents');
 const villagesRouter = require('./routes/villages');
 const customersRouter = require('./routes/customers');
@@ -15,12 +19,14 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
-app.use('/api/agents', agentsRouter);
-app.use('/api/villages', villagesRouter);
-app.use('/api/customers', customersRouter);
-app.use('/api/expenses', expensesRouter);
-app.use('/api/losses', lossesRouter);
-app.use('/api/dashboard', dashboardRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/users', requireAuth, requireRole('admin'), usersRouter);
+app.use('/api/agents', requireAuth, agentsRouter);
+app.use('/api/villages', requireAuth, villagesRouter);
+app.use('/api/customers', requireAuth, customersRouter);
+app.use('/api/expenses', requireAuth, expensesRouter);
+app.use('/api/losses', requireAuth, lossesRouter);
+app.use('/api/dashboard', requireAuth, dashboardRouter);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, req, res, next) => {
@@ -33,6 +39,7 @@ const PORT = process.env.PORT || 4000;
 async function start() {
   await ensureSchema();
   await seed();
+  await bootstrapAdmin();
   app.listen(PORT, () => console.log(`Lending Collection backend listening on http://localhost:${PORT}`));
 }
 
