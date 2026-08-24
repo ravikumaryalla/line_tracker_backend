@@ -6,8 +6,8 @@ async function bootstrapAdmin() {
   const password = process.env.BOOTSTRAP_ADMIN_PASSWORD;
   if (!phone || !password) return;
 
-  const already = (await pool.query("SELECT COUNT(*) c FROM users WHERE role = 'admin'")).rows[0].c;
-  if (Number(already) > 0) return;
+  const existing = (await pool.query('SELECT id FROM users WHERE phone = $1', [phone])).rows[0];
+  if (existing) return;
 
   const hash = await bcrypt.hash(password, 10);
   await pool.query(
