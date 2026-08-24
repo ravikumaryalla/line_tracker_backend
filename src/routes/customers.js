@@ -62,6 +62,34 @@ router.post('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Edit contact/assignment details (not the given/weekly/weeks schedule).
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const c = (await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id])).rows[0];
+    if (!c) return res.status(404).json({ error: 'Customer not found' });
+
+    const name = req.body.name !== undefined ? req.body.name : c.name;
+    const phone = req.body.phone !== undefined ? req.body.phone : c.phone;
+    const address = req.body.address !== undefined ? req.body.address : c.address;
+    const nominee = req.body.nominee !== undefined ? req.body.nominee : c.nominee;
+    const villageId = req.body.villageId !== undefined ? req.body.villageId : c.village_id;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+
+    let agentId = req.body.agentId !== undefined ? req.body.agentId : c.agent_id;
+    if (req.body.villageId !== undefined && req.body.agentId === undefined) {
+      const v = (await pool.query('SELECT agent_id FROM villages WHERE id = $1', [villageId])).rows[0];
+      if (v) agentId = v.agent_id;
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE customers SET name = $1, phone = $2, address = $3, nominee = $4, village_id = $5, agent_id = $6
+       WHERE id = $7 RETURNING *`,
+      [name, phone || null, address || null, nominee || null, villageId || null, agentId, c.id]
+    );
+    res.json(await serializeCustomer(pool, rows[0]));
+  } catch (err) { next(err); }
+});
+
 // Collect a payment (partial payments allowed).
 router.post('/:id/payments', async (req, res, next) => {
   const client = await pool.connect();

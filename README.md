@@ -32,6 +32,7 @@ Every endpoint except `/api/health` and `/api/auth/*` requires a Bearer token, a
 - `GET  /api/customers/:id` (includes payment timeline)
 - `GET  /api/customers/:id/payments`
 - `POST /api/customers` — give money / create a new customer schedule: `{ name, phone, address, nominee, villageId, agentId, given, weekly, weeks }` (`nominee` is optional)
+- `PATCH /api/customers/:id` — edit contact/assignment details (not the given/weekly/weeks schedule): `{ name, phone, address, nominee, villageId, agentId }`
 - `POST /api/customers/:id/payments` — collect a payment (partials allowed): `{ amount, note }`
 - `GET  /api/expenses?agentId=`
 - `POST /api/expenses` — `{ agentId, category, amount, note }`
