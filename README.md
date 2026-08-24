@@ -14,7 +14,7 @@ Tables are created (`CREATE TABLE IF NOT EXISTS`) and seeded with demo data auto
 
 ### First-time admin bootstrap
 
-Every endpoint except `/api/health` and `/api/auth/*` requires a Bearer token, and only an approved admin can approve/reject/create users — so the very first admin has to be created out-of-band. Set `BOOTSTRAP_ADMIN_PHONE` and `BOOTSTRAP_ADMIN_PASSWORD` in `.env` and start the server once; it inserts an approved admin with those credentials if no admin exists yet (idempotent — safe to leave running, or clear the vars after first boot). Log in with that phone/password to get a token, then use `/api/users` to approve real signups or create more admins.
+Every endpoint except `/api/health` and `/api/auth/*` requires a Bearer token, and only an approved admin can approve/reject/create users — so the very first admin has to be created out-of-band. Set `BOOTSTRAP_ADMIN_PHONE` and `BOOTSTRAP_ADMIN_PASSWORD` in `.env` and start the server once; it inserts an approved admin with those credentials if that phone doesn't already exist (idempotent per phone — safe to leave running, or clear the vars after first boot; changing the vars to a new phone/password creates another admin on the next boot). Log in with that phone/password to get a token, then use `/api/users` to approve real signups or create more admins.
 
 ## API
 
@@ -31,7 +31,7 @@ Every endpoint except `/api/health` and `/api/auth/*` requires a Bearer token, a
 - `GET  /api/customers?agentId=&villageId=&search=`
 - `GET  /api/customers/:id` (includes payment timeline)
 - `GET  /api/customers/:id/payments`
-- `POST /api/customers` — give money / create a new customer schedule: `{ name, phone, address, villageId, agentId, given, weekly, weeks }`
+- `POST /api/customers` — give money / create a new customer schedule: `{ name, phone, address, nominee, villageId, agentId, given, weekly, weeks }` (`nominee` is optional)
 - `POST /api/customers/:id/payments` — collect a payment (partials allowed): `{ amount, note }`
 - `GET  /api/expenses?agentId=`
 - `POST /api/expenses` — `{ agentId, category, amount, note }`

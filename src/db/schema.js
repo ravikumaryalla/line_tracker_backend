@@ -20,6 +20,7 @@ async function ensureSchema() {
       name TEXT NOT NULL,
       phone TEXT,
       address TEXT,
+      nominee TEXT,
       village_id INTEGER REFERENCES villages(id),
       agent_id INTEGER REFERENCES agents(id),
       given_amount INTEGER NOT NULL,
@@ -30,6 +31,8 @@ async function ensureSchema() {
       partial_weeks TEXT NOT NULL DEFAULT '{}',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    ALTER TABLE customers ADD COLUMN IF NOT EXISTS nominee TEXT;
 
     CREATE TABLE IF NOT EXISTS payments (
       id SERIAL PRIMARY KEY,

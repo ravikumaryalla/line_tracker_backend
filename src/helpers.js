@@ -22,6 +22,7 @@ async function serializeCustomer(pool, c) {
     name: c.name,
     phone: c.phone,
     address: c.address,
+    nominee: c.nominee,
     village: villageName,
     villageId: c.village_id,
     agentId: c.agent_id,

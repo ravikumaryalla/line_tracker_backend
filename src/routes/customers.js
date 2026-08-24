@@ -44,7 +44,7 @@ router.get('/:id/payments', async (req, res, next) => {
 // "Give money" — create a new customer and their weekly repayment schedule.
 router.post('/', async (req, res, next) => {
   try {
-    const { name, phone, address, villageId, agentId, given, weekly, weeks } = req.body;
+    const { name, phone, address, nominee, villageId, agentId, given, weekly, weeks } = req.body;
     if (!name || !given || !weekly || !weeks) {
       return res.status(400).json({ error: 'name, given, weekly and weeks are required' });
     }
@@ -54,9 +54,9 @@ router.post('/', async (req, res, next) => {
       if (v) resolvedAgentId = v.agent_id;
     }
     const { rows } = await pool.query(
-      `INSERT INTO customers (name, phone, address, village_id, agent_id, given_amount, weekly_amount, total_weeks)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [name, phone || null, address || null, villageId || null, resolvedAgentId, given, weekly, weeks]
+      `INSERT INTO customers (name, phone, address, nominee, village_id, agent_id, given_amount, weekly_amount, total_weeks)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [name, phone || null, address || null, nominee || null, villageId || null, resolvedAgentId, given, weekly, weeks]
     );
     res.status(201).json(await serializeCustomer(pool, rows[0]));
   } catch (err) { next(err); }
