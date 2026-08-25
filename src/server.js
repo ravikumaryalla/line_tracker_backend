@@ -18,7 +18,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get('/api/health', (req, res) => res.json({ ok: true }));
+app.get('/api/health', (req, res) => res.json({
+  ok: true,
+  commit: process.env.RENDER_GIT_COMMIT || 'unknown',
+  seedDemoData: process.env.SEED_DEMO_DATA === 'true',
+}));
 app.use('/api/auth', authRouter);
 app.use('/api/users', requireAuth, requireRole('admin'), usersRouter);
 app.use('/api/agents', requireAuth, agentsRouter);
