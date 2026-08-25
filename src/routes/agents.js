@@ -1,5 +1,7 @@
 const express = require('express');
+const bcrypt = require('bcrypt');
 const pool = require('../db/connection');
+const { requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -45,12 +47,14 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/', async (req, res, next) => {
+router.post('/', requireRole('admin'), async (req, res, next) => {
   try {
     const name = (req.body.name || '').trim();
     const phone = (req.body.phone || '').replace(/\D/g, '');
+    const password = req.body.password || '';
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (phone.length !== 10) return res.status(400).json({ error: 'phone must be 10 digits' });
+    if (password && password.length < 6) return res.status(400).json({ error: 'password must be at least 6 characters' });
 
     const dupe = (await pool.query(
       "SELECT id FROM agents WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $1", [phone]
@@ -61,13 +65,36 @@ router.post('/', async (req, res, next) => {
       'INSERT INTO agents (name, phone, active) VALUES ($1, $2, true) RETURNING *', [name, phone]
     );
 
-    // Link the matching login, if this agent has already signed up.
-    await pool.query(
-      "UPDATE users SET agent_id = $1 WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $2 AND agent_id IS NULL",
-      [rows[0].id, phone]
-    );
+    const agent = rows[0];
 
-    res.status(201).json(await serializeAgent(rows[0]));
+    // An admin creating an agent should be all it takes: give them an approved login
+    // straight away so they can sign in without a separate signup and approval round.
+    const existingUser = (await pool.query(
+      "SELECT id FROM users WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $1", [phone]
+    )).rows[0];
+
+    let login = 'none';
+    if (existingUser) {
+      // Already signed up (possibly still pending) - link, approve, and reset the
+      // password if the admin supplied one.
+      const hash = password ? await bcrypt.hash(password, 10) : null;
+      await pool.query(
+        `UPDATE users SET agent_id = $1, status = 'approved', active = true, approved_at = now(), approved_by = $2,
+         password_hash = COALESCE($3, password_hash) WHERE id = $4`,
+        [agent.id, req.user.id, hash, existingUser.id]
+      );
+      login = password ? 'updated' : 'linked';
+    } else if (password) {
+      const hash = await bcrypt.hash(password, 10);
+      await pool.query(
+        `INSERT INTO users (name, phone, password_hash, role, status, active, agent_id, approved_at, approved_by)
+         VALUES ($1, $2, $3, 'agent', 'approved', true, $4, now(), $5)`,
+        [name, phone, hash, agent.id, req.user.id]
+      );
+      login = 'created';
+    }
+
+    res.status(201).json({ ...(await serializeAgent(agent)), login });
   } catch (err) { next(err); }
 });
 
