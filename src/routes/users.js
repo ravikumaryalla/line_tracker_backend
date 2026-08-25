@@ -89,12 +89,30 @@ router.patch('/:id', async (req, res, next) => {
 });
 
 router.delete('/:id', async (req, res, next) => {
+  const client = await pool.connect();
   try {
-    const user = (await pool.query('SELECT id FROM users WHERE id = $1', [req.params.id])).rows[0];
+    const user = (await client.query('SELECT id, role FROM users WHERE id = $1', [req.params.id])).rows[0];
     if (!user) return res.status(404).json({ error: 'User not found' });
-    await pool.query('UPDATE users SET active = false WHERE id = $1', [user.id]);
-    res.json({ id: user.id, active: false });
-  } catch (err) { next(err); }
+    if (user.id === req.user.id) return res.status(400).json({ error: 'You cannot delete your own account' });
+
+    if (user.role === 'admin') {
+      const admins = Number((await client.query("SELECT COUNT(*) c FROM users WHERE role = 'admin' AND id <> $1", [user.id])).rows[0].c);
+      if (admins === 0) return res.status(400).json({ error: 'Cannot delete the last admin account' });
+    }
+
+    await client.query('BEGIN');
+    // approved_by references users(id), so clear the trail this account left on others first.
+    await client.query('UPDATE users SET approved_by = NULL WHERE approved_by = $1', [user.id]);
+    await client.query('DELETE FROM users WHERE id = $1', [user.id]);
+    await client.query('COMMIT');
+
+    res.json({ id: user.id, deleted: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    next(err);
+  } finally {
+    client.release();
+  }
 });
 
 module.exports = router;
