@@ -38,7 +38,7 @@ const PORT = process.env.PORT || 4000;
 
 async function start() {
   await ensureSchema();
-  await seed();
+  if (process.env.SEED_DEMO_DATA === 'true') await seed();
   await bootstrapAdmin();
   app.listen(PORT, () => console.log(`Lending Collection backend listening on http://localhost:${PORT}`));
 }

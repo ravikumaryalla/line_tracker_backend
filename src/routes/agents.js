@@ -45,6 +45,32 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.post('/', async (req, res, next) => {
+  try {
+    const name = (req.body.name || '').trim();
+    const phone = (req.body.phone || '').replace(/\D/g, '');
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    if (phone.length !== 10) return res.status(400).json({ error: 'phone must be 10 digits' });
+
+    const dupe = (await pool.query(
+      "SELECT id FROM agents WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $1", [phone]
+    )).rows[0];
+    if (dupe) return res.status(409).json({ error: 'An agent with that phone already exists' });
+
+    const { rows } = await pool.query(
+      'INSERT INTO agents (name, phone, active) VALUES ($1, $2, true) RETURNING *', [name, phone]
+    );
+
+    // Link the matching login, if this agent has already signed up.
+    await pool.query(
+      "UPDATE users SET agent_id = $1 WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $2 AND agent_id IS NULL",
+      [rows[0].id, phone]
+    );
+
+    res.status(201).json(await serializeAgent(rows[0]));
+  } catch (err) { next(err); }
+});
+
 router.patch('/:id', async (req, res, next) => {
   try {
     const a = (await pool.query('SELECT * FROM agents WHERE id = $1', [req.params.id])).rows[0];

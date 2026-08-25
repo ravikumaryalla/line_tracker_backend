@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "seed": "node src/db/seed.js"
+    "seed": "node src/db/seed.js",
+    "db:clear": "node src/db/clear.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
