@@ -11,6 +11,8 @@ async function serializeCustomer(pool, c) {
   );
   const paidToday = Number(paidTodayRow.rows[0].s);
 
+  const photoRow = await pool.query('SELECT 1 FROM customer_photos WHERE customer_id = $1', [c.id]);
+
   let villageName = null;
   if (c.village_id) {
     const v = await pool.query('SELECT name FROM villages WHERE id = $1', [c.village_id]);
@@ -23,9 +25,9 @@ async function serializeCustomer(pool, c) {
     phone: c.phone,
     address: c.address,
     nominee: c.nominee,
+    hasPhoto: photoRow.rowCount > 0,
     village: villageName,
     villageId: c.village_id,
-    agentId: c.agent_id,
     given: c.given_amount,
     weekly: c.weekly_amount,
     totalWeeks: c.total_weeks,

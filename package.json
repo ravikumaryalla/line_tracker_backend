@@ -7,7 +7,6 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "seed": "node src/db/seed.js",
     "db:clear": "node src/db/clear.js",
     "set-password": "node src/db/setPassword.js"
   },

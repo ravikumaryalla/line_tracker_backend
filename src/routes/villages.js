@@ -4,7 +4,6 @@ const pool = require('../db/connection');
 const router = express.Router();
 
 async function serializeVillage(v) {
-  const agent = v.agent_id ? (await pool.query('SELECT id, name FROM agents WHERE id = $1', [v.agent_id])).rows[0] : null;
   const customers = (await pool.query('SELECT * FROM customers WHERE village_id = $1', [v.id])).rows;
   const given = customers.reduce((s, c) => s + c.given_amount, 0);
   const collected = customers.reduce((s, c) => {
@@ -14,7 +13,6 @@ async function serializeVillage(v) {
   }, 0);
   return {
     id: v.id, name: v.name,
-    agentId: agent ? agent.id : null, agentName: agent ? agent.name : 'Unassigned',
     customerCount: customers.length, given, collected, pending: Math.max(0, given - collected)
   };
 }
@@ -34,31 +32,8 @@ router.post('/', async (req, res, next) => {
     const dupe = (await pool.query('SELECT id FROM villages WHERE LOWER(name) = LOWER($1)', [name])).rows[0];
     if (dupe) return res.status(409).json({ error: 'A village with that name already exists' });
 
-    const { agentId } = req.body;
-    if (agentId) {
-      const agent = (await pool.query('SELECT id FROM agents WHERE id = $1', [agentId])).rows[0];
-      if (!agent) return res.status(400).json({ error: 'agentId must reference an existing agent' });
-    }
-
-    const { rows } = await pool.query(
-      'INSERT INTO villages (name, agent_id) VALUES ($1, $2) RETURNING *',
-      [name, agentId || null]
-    );
+    const { rows } = await pool.query('INSERT INTO villages (name) VALUES ($1) RETURNING *', [name]);
     res.status(201).json(await serializeVillage(rows[0]));
-  } catch (err) { next(err); }
-});
-
-router.patch('/:id/assign', async (req, res, next) => {
-  try {
-    const v = (await pool.query('SELECT * FROM villages WHERE id = $1', [req.params.id])).rows[0];
-    if (!v) return res.status(404).json({ error: 'Village not found' });
-    const { agentId } = req.body;
-    const agent = (await pool.query('SELECT * FROM agents WHERE id = $1', [agentId])).rows[0];
-    if (!agent) return res.status(400).json({ error: 'agentId must reference an existing agent' });
-    await pool.query('UPDATE villages SET agent_id = $1 WHERE id = $2', [agentId, v.id]);
-    await pool.query('UPDATE customers SET agent_id = $1 WHERE village_id = $2', [agentId, v.id]);
-    const updated = (await pool.query('SELECT * FROM villages WHERE id = $1', [v.id])).rows[0];
-    res.json(await serializeVillage(updated));
   } catch (err) { next(err); }
 });
 

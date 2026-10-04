@@ -6,10 +6,9 @@ const router = express.Router();
 
 router.get('/', async (req, res, next) => {
   try {
-    const { agentId, villageId, search } = req.query;
+    const { villageId, search } = req.query;
     const clauses = [];
     const params = [];
-    if (agentId) { params.push(agentId); clauses.push(`agent_id = $${params.length}`); }
     if (villageId) { params.push(villageId); clauses.push(`village_id = $${params.length}`); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = (await pool.query(`SELECT * FROM customers ${where} ORDER BY name`, params)).rows;
@@ -41,28 +40,57 @@ router.get('/:id/payments', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+const MAX_PHOTO_LENGTH = 1.5 * 1024 * 1024;
+
+// Photos are optional data URIs; returns an error message or null.
+function photoError(photo) {
+  if (photo === undefined || photo === null) return null;
+  if (typeof photo !== 'string' || !photo.startsWith('data:image/')) return 'photo must be an image data URI';
+  if (photo.length > MAX_PHOTO_LENGTH) return 'photo is too large';
+  return null;
+}
+
+async function savePhoto(customerId, photo) {
+  if (photo === undefined) return;
+  if (photo === null) {
+    await pool.query('DELETE FROM customer_photos WHERE customer_id = $1', [customerId]);
+    return;
+  }
+  await pool.query(
+    `INSERT INTO customer_photos (customer_id, data) VALUES ($1, $2)
+     ON CONFLICT (customer_id) DO UPDATE SET data = EXCLUDED.data`,
+    [customerId, photo]
+  );
+}
+
+router.get('/:id/photo', async (req, res, next) => {
+  try {
+    const row = (await pool.query('SELECT data FROM customer_photos WHERE customer_id = $1', [req.params.id])).rows[0];
+    if (!row) return res.status(404).json({ error: 'Photo not found' });
+    res.json({ photo: row.data });
+  } catch (err) { next(err); }
+});
+
 // "Give money" — create a new customer and their weekly repayment schedule.
 router.post('/', async (req, res, next) => {
   try {
-    const { name, phone, address, nominee, villageId, agentId, given, weekly, weeks } = req.body;
+    const { name, phone, address, nominee, villageId, given, weekly, weeks, photo } = req.body;
     if (!name || !given || !weekly || !weeks) {
       return res.status(400).json({ error: 'name, given, weekly and weeks are required' });
     }
-    let resolvedAgentId = agentId || null;
-    if (villageId && !resolvedAgentId) {
-      const v = (await pool.query('SELECT agent_id FROM villages WHERE id = $1', [villageId])).rows[0];
-      if (v) resolvedAgentId = v.agent_id;
-    }
+    const badPhoto = photoError(photo);
+    if (badPhoto) return res.status(400).json({ error: badPhoto });
     const { rows } = await pool.query(
-      `INSERT INTO customers (name, phone, address, nominee, village_id, agent_id, given_amount, weekly_amount, total_weeks)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [name, phone || null, address || null, nominee || null, villageId || null, resolvedAgentId, given, weekly, weeks]
+      `INSERT INTO customers (name, phone, address, nominee, village_id, given_amount, weekly_amount, total_weeks)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [name, phone || null, address || null, nominee || null, villageId || null, given, weekly, weeks]
     );
+    if (photo) await savePhoto(rows[0].id, photo);
     res.status(201).json(await serializeCustomer(pool, rows[0]));
   } catch (err) { next(err); }
 });
 
-// Edit contact/assignment details (not the given/weekly/weeks schedule).
+// Edit contact/village details (not the given/weekly/weeks schedule).
 router.patch('/:id', async (req, res, next) => {
   try {
     const c = (await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id])).rows[0];
@@ -74,18 +102,15 @@ router.patch('/:id', async (req, res, next) => {
     const nominee = req.body.nominee !== undefined ? req.body.nominee : c.nominee;
     const villageId = req.body.villageId !== undefined ? req.body.villageId : c.village_id;
     if (!name) return res.status(400).json({ error: 'name is required' });
-
-    let agentId = req.body.agentId !== undefined ? req.body.agentId : c.agent_id;
-    if (req.body.villageId !== undefined && req.body.agentId === undefined) {
-      const v = (await pool.query('SELECT agent_id FROM villages WHERE id = $1', [villageId])).rows[0];
-      if (v) agentId = v.agent_id;
-    }
+    const badPhoto = photoError(req.body.photo);
+    if (badPhoto) return res.status(400).json({ error: badPhoto });
 
     const { rows } = await pool.query(
-      `UPDATE customers SET name = $1, phone = $2, address = $3, nominee = $4, village_id = $5, agent_id = $6
-       WHERE id = $7 RETURNING *`,
-      [name, phone || null, address || null, nominee || null, villageId || null, agentId, c.id]
+      `UPDATE customers SET name = $1, phone = $2, address = $3, nominee = $4, village_id = $5
+       WHERE id = $6 RETURNING *`,
+      [name, phone || null, address || null, nominee || null, villageId || null, c.id]
     );
+    await savePhoto(c.id, req.body.photo);
     res.json(await serializeCustomer(pool, rows[0]));
   } catch (err) { next(err); }
 });

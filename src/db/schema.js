@@ -2,17 +2,9 @@ const pool = require('./connection');
 
 async function ensureSchema() {
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS agents (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      phone TEXT,
-      active BOOLEAN NOT NULL DEFAULT true
-    );
-
     CREATE TABLE IF NOT EXISTS villages (
       id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      agent_id INTEGER REFERENCES agents(id)
+      name TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS customers (
@@ -22,7 +14,6 @@ async function ensureSchema() {
       address TEXT,
       nominee TEXT,
       village_id INTEGER REFERENCES villages(id),
-      agent_id INTEGER REFERENCES agents(id),
       given_amount INTEGER NOT NULL,
       weekly_amount INTEGER NOT NULL,
       total_weeks INTEGER NOT NULL,
@@ -33,6 +24,11 @@ async function ensureSchema() {
     );
 
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS nominee TEXT;
+
+    CREATE TABLE IF NOT EXISTS customer_photos (
+      customer_id INTEGER PRIMARY KEY REFERENCES customers(id),
+      data TEXT NOT NULL
+    );
 
     CREATE TABLE IF NOT EXISTS payments (
       id SERIAL PRIMARY KEY,
@@ -46,7 +42,6 @@ async function ensureSchema() {
 
     CREATE TABLE IF NOT EXISTS expenses (
       id SERIAL PRIMARY KEY,
-      agent_id INTEGER NOT NULL REFERENCES agents(id),
       category TEXT NOT NULL,
       amount INTEGER NOT NULL,
       note TEXT,
@@ -58,7 +53,6 @@ async function ensureSchema() {
       id SERIAL PRIMARY KEY,
       customer_name TEXT NOT NULL,
       village TEXT,
-      agent_name TEXT,
       remaining INTEGER NOT NULL,
       recovered INTEGER NOT NULL DEFAULT 0,
       reason TEXT,
@@ -70,10 +64,9 @@ async function ensureSchema() {
       name TEXT NOT NULL,
       phone TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'agent' CHECK (role IN ('admin', 'agent')),
-      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+      role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin', 'agent')),
+      status TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('pending', 'approved', 'rejected')),
       active BOOLEAN NOT NULL DEFAULT true,
-      agent_id INTEGER REFERENCES agents(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       approved_at TIMESTAMPTZ,
       approved_by INTEGER REFERENCES users(id)
@@ -81,6 +74,16 @@ async function ensureSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
     CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
+
+    -- Databases created before agents were removed still have agent_id columns. They are left in place
+    -- (unused) rather than dropped, but expenses.agent_id was NOT NULL and would block new expenses.
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'expenses' AND column_name = 'agent_id') THEN
+        ALTER TABLE expenses ALTER COLUMN agent_id DROP NOT NULL;
+      END IF;
+    END $$;
+    ALTER TABLE users ALTER COLUMN role SET DEFAULT 'admin';
   `);
 }
 
