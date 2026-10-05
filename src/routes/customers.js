@@ -129,23 +129,36 @@ router.post('/:id/payments', async (req, res, next) => {
 
     const partial = JSON.parse(c.partial_weeks || '{}');
     const missed = JSON.parse(c.missed_weeks || '[]');
-    const week = c.weeks_paid + 1;
-    const alreadyPartial = partial[week] || 0;
-    const runningTotal = alreadyPartial + amount;
-
-    let weeksPaid = c.weeks_paid;
-    if (runningTotal >= c.weekly_amount) {
-      weeksPaid += 1;
-      delete partial[week];
-    } else {
-      partial[week] = runningTotal;
+    const startWeek = c.weeks_paid + 1;
+    const partialSum = Object.values(partial).reduce((a, b) => a + b, 0);
+    const balance = c.total_weeks * c.weekly_amount - (c.weeks_paid * c.weekly_amount + partialSum);
+    if (amount > balance) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Amount is more than the balance (₹${balance.toLocaleString('en-IN')})` });
     }
-    const missedIdx = missed.indexOf(week);
-    if (missedIdx !== -1) missed.splice(missedIdx, 1);
+
+    // Anything above the current week's due carries forward, so the customer pays ahead.
+    let weeksPaid = c.weeks_paid;
+    let week = startWeek;
+    let left = amount;
+    while (left > 0 && weeksPaid < c.total_weeks) {
+      const need = c.weekly_amount - (partial[week] || 0);
+      const missedIdx = missed.indexOf(week);
+      if (missedIdx !== -1) missed.splice(missedIdx, 1);
+      if (left >= need) {
+        weeksPaid += 1;
+        delete partial[week];
+        left -= need;
+        week += 1;
+      } else {
+        partial[week] = (partial[week] || 0) + left;
+        left = 0;
+      }
+    }
 
     await client.query(
       "INSERT INTO payments (customer_id, week_number, amount, note, paid_on) VALUES ($1, $2, $3, $4, CURRENT_DATE)",
-      [c.id, week, amount, req.body.note || null]
+      [c.id, startWeek, amount, req.body.note || null]
     );
     await client.query(
       'UPDATE customers SET weeks_paid = $1, partial_weeks = $2, missed_weeks = $3 WHERE id = $4',
