@@ -1,18 +1,17 @@
 const express = require('express');
 const pool = require('../db/connection');
+const { paidTotals } = require('../helpers');
 
 const router = express.Router();
 
 router.get('/summary', async (req, res, next) => {
   try {
     const customers = (await pool.query('SELECT * FROM customers')).rows;
+    const paid = await paidTotals(pool);
+    const paidBy = (c) => paid.get(c.id) || 0;
     const given = customers.reduce((s, c) => s + c.given_amount, 0);
     const toCollect = customers.reduce((s, c) => s + c.total_weeks * c.weekly_amount, 0);
-    const collected = customers.reduce((s, c) => {
-      const partial = JSON.parse(c.partial_weeks || '{}');
-      const partialSum = Object.values(partial).reduce((x, y) => x + y, 0);
-      return s + c.weeks_paid * c.weekly_amount + partialSum;
-    }, 0);
+    const collected = customers.reduce((s, c) => s + paidBy(c), 0);
     const outside = toCollect - collected;
     const expenses = Number((await pool.query('SELECT COALESCE(SUM(amount), 0) s FROM expenses')).rows[0].s);
     const losses = Number((await pool.query('SELECT COALESCE(SUM(remaining - recovered), 0) s FROM losses')).rows[0].s);
@@ -22,7 +21,7 @@ router.get('/summary', async (req, res, next) => {
     const todayCollected = Number((await pool.query(
       "SELECT COALESCE(SUM(amount), 0) s FROM payments WHERE paid_on = CURRENT_DATE"
     )).rows[0].s);
-    const dueCustomers = customers.filter((c) => c.weeks_paid < c.total_weeks);
+    const dueCustomers = customers.filter((c) => paidBy(c) < c.total_weeks * c.weekly_amount);
     const todayExpected = dueCustomers.reduce((s, c) => s + c.weekly_amount, 0);
     const pendingNow = Math.max(0, todayExpected - todayCollected);
 
@@ -42,11 +41,7 @@ router.get('/summary', async (req, res, next) => {
     const villages = villageRows.map((v) => {
       const vc = customers.filter((c) => c.village_id === v.id);
       const vGiven = vc.reduce((s, c) => s + c.given_amount, 0);
-      const vCollected = vc.reduce((s, c) => {
-        const partial = JSON.parse(c.partial_weeks || '{}');
-        const partialSum = Object.values(partial).reduce((x, y) => x + y, 0);
-        return s + c.weeks_paid * c.weekly_amount + partialSum;
-      }, 0);
+      const vCollected = vc.reduce((s, c) => s + paidBy(c), 0);
       return { name: v.name, given: vGiven, collected: vCollected };
     });
 

@@ -1,16 +1,13 @@
 const express = require('express');
 const pool = require('../db/connection');
+const { paidTotals } = require('../helpers');
 
 const router = express.Router();
 
-async function serializeVillage(v) {
+async function serializeVillage(v, paid) {
   const customers = (await pool.query('SELECT * FROM customers WHERE village_id = $1', [v.id])).rows;
   const given = customers.reduce((s, c) => s + c.given_amount, 0);
-  const collected = customers.reduce((s, c) => {
-    const partial = JSON.parse(c.partial_weeks || '{}');
-    const partialSum = Object.values(partial).reduce((x, y) => x + y, 0);
-    return s + c.weeks_paid * c.weekly_amount + partialSum;
-  }, 0);
+  const collected = customers.reduce((s, c) => s + (paid.get(c.id) || 0), 0);
   return {
     id: v.id, name: v.name,
     customerCount: customers.length, given, collected, pending: Math.max(0, given - collected)
@@ -20,7 +17,8 @@ async function serializeVillage(v) {
 router.get('/', async (req, res, next) => {
   try {
     const villages = (await pool.query('SELECT * FROM villages ORDER BY name')).rows;
-    res.json(await Promise.all(villages.map(serializeVillage)));
+    const paid = await paidTotals(pool);
+    res.json(await Promise.all(villages.map((v) => serializeVillage(v, paid))));
   } catch (err) { next(err); }
 });
 
@@ -33,7 +31,7 @@ router.post('/', async (req, res, next) => {
     if (dupe) return res.status(409).json({ error: 'A village with that name already exists' });
 
     const { rows } = await pool.query('INSERT INTO villages (name) VALUES ($1) RETURNING *', [name]);
-    res.status(201).json(await serializeVillage(rows[0]));
+    res.status(201).json(await serializeVillage(rows[0], new Map()));
   } catch (err) { next(err); }
 });
 

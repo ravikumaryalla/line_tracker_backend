@@ -26,7 +26,12 @@ router.get('/:id', async (req, res, next) => {
     const c = (await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id])).rows[0];
     if (!c) return res.status(404).json({ error: 'Customer not found' });
     const view = await serializeCustomer(pool, c);
-    view.timeline = serializeTimeline(view);
+    // Format the date in SQL so it isn't shifted by the server's timezone.
+    const payments = (await pool.query(
+      "SELECT week_number, amount, TO_CHAR(paid_on, 'DD Mon YYYY') AS date FROM payments WHERE customer_id = $1 ORDER BY created_at",
+      [c.id]
+    )).rows;
+    view.timeline = serializeTimeline(view, payments);
     res.json(view);
   } catch (err) { next(err); }
 });
@@ -129,36 +134,30 @@ router.post('/:id/payments', async (req, res, next) => {
 
     const partial = JSON.parse(c.partial_weeks || '{}');
     const missed = JSON.parse(c.missed_weeks || '[]');
-    const startWeek = c.weeks_paid + 1;
-    const partialSum = Object.values(partial).reduce((a, b) => a + b, 0);
-    const balance = c.total_weeks * c.weekly_amount - (c.weeks_paid * c.weekly_amount + partialSum);
+    const week = c.weeks_paid + 1;
+    const paidSoFar = Number((await client.query('SELECT COALESCE(SUM(amount), 0) s FROM payments WHERE customer_id = $1', [c.id])).rows[0].s);
+    const balance = c.total_weeks * c.weekly_amount - paidSoFar;
     if (amount > balance) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: `Amount is more than the balance (₹${balance.toLocaleString('en-IN')})` });
     }
 
-    // Anything above the current week's due carries forward, so the customer pays ahead.
+    // The whole payment belongs to the current week, even above the weekly amount; the
+    // extra just lowers the balance so the loan finishes early.
     let weeksPaid = c.weeks_paid;
-    let week = startWeek;
-    let left = amount;
-    while (left > 0 && weeksPaid < c.total_weeks) {
-      const need = c.weekly_amount - (partial[week] || 0);
-      const missedIdx = missed.indexOf(week);
-      if (missedIdx !== -1) missed.splice(missedIdx, 1);
-      if (left >= need) {
-        weeksPaid += 1;
-        delete partial[week];
-        left -= need;
-        week += 1;
-      } else {
-        partial[week] = (partial[week] || 0) + left;
-        left = 0;
-      }
+    const weekSum = (partial[week] || 0) + amount;
+    if (weekSum >= c.weekly_amount || amount === balance) {
+      weeksPaid += 1;
+      delete partial[week];
+    } else {
+      partial[week] = weekSum;
     }
+    const missedIdx = missed.indexOf(week);
+    if (missedIdx !== -1) missed.splice(missedIdx, 1);
 
     await client.query(
       "INSERT INTO payments (customer_id, week_number, amount, note, paid_on) VALUES ($1, $2, $3, $4, CURRENT_DATE)",
-      [c.id, startWeek, amount, req.body.note || null]
+      [c.id, week, amount, req.body.note || null]
     );
     await client.query(
       'UPDATE customers SET weeks_paid = $1, partial_weeks = $2, missed_weeks = $3 WHERE id = $4',
