@@ -23,6 +23,17 @@ async function pastTotals(pool) {
   return new Map(rows.map((r) => [r.customer_id, { given: Number(r.given), toCollect: Number(r.to_collect), paid: Number(r.paid) }]));
 }
 
+// Weeks left once extra payments are counted: money paid above the weekly amount shortens the loan
+// from the end. The current week still needs weekly - currentPartial; the final week may need less than weekly.
+// Returns the last week number and what that week needs.
+function scheduleFor({ weeksPaid, weekly, remaining, currentPartial }) {
+  const firstNeed = Math.max(0, weekly - currentPartial);
+  if (remaining <= firstNeed) return { lastWeek: weeksPaid + 1, lastAmount: remaining };
+  const rest = remaining - firstNeed;
+  const more = Math.ceil(rest / weekly);
+  return { lastWeek: weeksPaid + 1 + more, lastAmount: rest - (more - 1) * weekly };
+}
+
 async function serializeCustomer(pool, c) {
   const missed = JSON.parse(c.missed_weeks || '[]');
   const partial = JSON.parse(c.partial_weeks || '{}');
@@ -37,6 +48,12 @@ async function serializeCustomer(pool, c) {
 
   const lastWeekRow = await pool.query('SELECT MAX(week_number) w FROM payments WHERE customer_id = $1 AND loan_no = $2', [c.id, c.loan_no]);
   const lastPaidWeek = lastWeekRow.rows[0].w || 0;
+
+  const remaining = Math.max(0, total - paid);
+  const currentPartial = partial[c.weeks_paid + 1] || 0;
+  const schedule = remaining > 0
+    ? scheduleFor({ weeksPaid: c.weeks_paid, weekly: c.weekly_amount, remaining, currentPartial })
+    : { lastWeek: lastPaidWeek || c.weeks_paid, lastAmount: 0 };
 
   const photoRow = await pool.query('SELECT 1 FROM customer_photos WHERE customer_id = $1', [c.id]);
 
@@ -63,11 +80,15 @@ async function serializeCustomer(pool, c) {
     partialWeeks: partial,
     paid,
     total,
-    remaining: Math.max(0, total - paid),
+    remaining,
     isDone: paid >= total,
     paidToday,
     isPaidToday: paidToday > 0,
     currentWeek: c.weeks_paid + 1,
+    // totalWeeks is the original term; scheduleWeeks is how many weeks the loan actually runs.
+    scheduleWeeks: schedule.lastWeek,
+    lastWeekAmount: schedule.lastAmount,
+    dueNow: Math.min(Math.max(0, c.weekly_amount - currentPartial), remaining),
     lastPaidWeek,
     loanNo: c.loan_no,
     loanStartedAt: c.loan_started_at || c.created_at,
@@ -82,13 +103,14 @@ function serializeTimeline(customer, payments) {
 
   // A cleared loan has no further weeks to show. Stop at the last week that actually has a payment:
   // payments made under the old carry-forward logic advanced weeks_paid past the week they were recorded on.
-  const lastWeek = customer.isDone ? (customer.lastPaidWeek || customer.weeksPaid) : customer.totalWeeks;
+  // A running loan stops at scheduleWeeks, which is shorter than the term when extra has been paid.
+  const lastWeek = customer.isDone ? (customer.lastPaidWeek || customer.weeksPaid) : (customer.scheduleWeeks || customer.totalWeeks);
   const tl = [];
   for (let w = 1; w <= lastWeek; w++) {
     const weekPayments = byWeek[w] || [];
     const sum = weekPayments.reduce((s, p) => s + p.amount, 0);
     let status = 'upcoming';
-    let amount = customer.weekly;
+    let amount = !customer.isDone && w === lastWeek && customer.lastWeekAmount ? customer.lastWeekAmount : customer.weekly;
     if (w <= customer.weeksPaid) { status = 'paid'; amount = sum || customer.weekly; }
     else if (sum > 0) { status = 'partial'; amount = sum; }
     else if (customer.missedWeeks.includes(w)) status = 'missed';
@@ -98,4 +120,4 @@ function serializeTimeline(customer, payments) {
   return tl;
 }
 
-module.exports = { paidTotals, pastTotals, serializeCustomer, serializeTimeline };
+module.exports = { paidTotals, pastTotals, scheduleFor, serializeCustomer, serializeTimeline };

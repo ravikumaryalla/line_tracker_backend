@@ -25,7 +25,8 @@ router.get('/summary', async (req, res, next) => {
       "SELECT COALESCE(SUM(amount), 0) s FROM payments WHERE paid_on = CURRENT_DATE"
     )).rows[0].s);
     const dueCustomers = customers.filter((c) => paidBy(c) < c.total_weeks * c.weekly_amount);
-    const todayExpected = dueCustomers.reduce((s, c) => s + c.weekly_amount, 0);
+    // A short final week (after extra payments) only expects what is left.
+    const todayExpected = dueCustomers.reduce((s, c) => s + Math.min(c.weekly_amount, c.total_weeks * c.weekly_amount - paidBy(c)), 0);
     const pendingNow = Math.max(0, todayExpected - todayCollected);
 
     const weekBars = [];
