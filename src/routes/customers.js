@@ -28,10 +28,16 @@ router.get('/:id', async (req, res, next) => {
     const view = await serializeCustomer(pool, c);
     // Format the date in SQL so it isn't shifted by the server's timezone.
     const payments = (await pool.query(
-      "SELECT week_number, amount, TO_CHAR(paid_on, 'DD Mon YYYY') AS date FROM payments WHERE customer_id = $1 ORDER BY created_at",
-      [c.id]
+      "SELECT week_number, amount, TO_CHAR(paid_on, 'DD Mon YYYY') AS date FROM payments WHERE customer_id = $1 AND loan_no = $2 ORDER BY created_at",
+      [c.id, c.loan_no]
     )).rows;
     view.timeline = serializeTimeline(view, payments);
+    view.pastLoans = (await pool.query(
+      `SELECT loan_no AS "loanNo", given_amount AS given, weekly_amount AS weekly, total_weeks AS "totalWeeks", paid,
+              TO_CHAR(started_at, 'DD Mon YYYY') AS "startedAt", TO_CHAR(closed_at, 'DD Mon YYYY') AS "closedAt"
+       FROM past_loans WHERE customer_id = $1 ORDER BY loan_no DESC`,
+      [c.id]
+    )).rows;
     res.json(view);
   } catch (err) { next(err); }
 });
@@ -135,7 +141,7 @@ router.post('/:id/payments', async (req, res, next) => {
     const partial = JSON.parse(c.partial_weeks || '{}');
     const missed = JSON.parse(c.missed_weeks || '[]');
     const week = c.weeks_paid + 1;
-    const paidSoFar = Number((await client.query('SELECT COALESCE(SUM(amount), 0) s FROM payments WHERE customer_id = $1', [c.id])).rows[0].s);
+    const paidSoFar = Number((await client.query('SELECT COALESCE(SUM(amount), 0) s FROM payments WHERE customer_id = $1 AND loan_no = $2', [c.id, c.loan_no])).rows[0].s);
     const balance = c.total_weeks * c.weekly_amount - paidSoFar;
     if (amount > balance) {
       await client.query('ROLLBACK');
@@ -156,8 +162,8 @@ router.post('/:id/payments', async (req, res, next) => {
     if (missedIdx !== -1) missed.splice(missedIdx, 1);
 
     await client.query(
-      "INSERT INTO payments (customer_id, week_number, amount, note, paid_on) VALUES ($1, $2, $3, $4, CURRENT_DATE)",
-      [c.id, week, amount, req.body.note || null]
+      "INSERT INTO payments (customer_id, loan_no, week_number, amount, note, paid_on) VALUES ($1, $2, $3, $4, $5, CURRENT_DATE)",
+      [c.id, c.loan_no, week, amount, req.body.note || null]
     );
     await client.query(
       'UPDATE customers SET weeks_paid = $1, partial_weeks = $2, missed_weeks = $3 WHERE id = $4',
@@ -167,6 +173,45 @@ router.post('/:id/payments', async (req, res, next) => {
 
     const updated = (await pool.query('SELECT * FROM customers WHERE id = $1', [c.id])).rows[0];
     res.status(201).json(await serializeCustomer(pool, updated));
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
+// Give a customer whose loan is cleared a new loan. The cleared loan moves to past_loans and the
+// new one starts again from week 1; its payments are kept apart by loan_no.
+router.post('/:id/loans', async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const { given, weekly, weeks } = req.body;
+    if (!given || !weekly || !weeks) return res.status(400).json({ error: 'given, weekly and weeks are required' });
+
+    await client.query('BEGIN');
+    const c = (await client.query('SELECT * FROM customers WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+    if (!c) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Customer not found' }); }
+
+    const paid = Number((await client.query('SELECT COALESCE(SUM(amount), 0) s FROM payments WHERE customer_id = $1 AND loan_no = $2', [c.id, c.loan_no])).rows[0].s);
+    if (paid < c.total_weeks * c.weekly_amount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: "Current loan isn't cleared yet" });
+    }
+
+    await client.query(
+      `INSERT INTO past_loans (customer_id, loan_no, given_amount, weekly_amount, total_weeks, paid, started_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [c.id, c.loan_no, c.given_amount, c.weekly_amount, c.total_weeks, paid, c.loan_started_at || c.created_at]
+    );
+    const { rows } = await client.query(
+      `UPDATE customers SET given_amount = $1, weekly_amount = $2, total_weeks = $3, weeks_paid = 0,
+         missed_weeks = '[]', partial_weeks = '{}', loan_no = loan_no + 1, loan_started_at = now()
+       WHERE id = $4 RETURNING *`,
+      [given, weekly, weeks, c.id]
+    );
+    await client.query('COMMIT');
+    res.status(201).json(await serializeCustomer(pool, rows[0]));
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);

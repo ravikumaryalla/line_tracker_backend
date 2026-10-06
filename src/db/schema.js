@@ -24,6 +24,9 @@ async function ensureSchema() {
     );
 
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS nominee TEXT;
+    -- The loan fields above describe the current loan; earlier loans move to past_loans.
+    ALTER TABLE customers ADD COLUMN IF NOT EXISTS loan_no INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE customers ADD COLUMN IF NOT EXISTS loan_started_at TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS customer_photos (
       customer_id INTEGER PRIMARY KEY REFERENCES customers(id),
@@ -38,6 +41,20 @@ async function ensureSchema() {
       note TEXT,
       paid_on DATE NOT NULL DEFAULT CURRENT_DATE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS loan_no INTEGER NOT NULL DEFAULT 1;
+
+    CREATE TABLE IF NOT EXISTS past_loans (
+      id SERIAL PRIMARY KEY,
+      customer_id INTEGER NOT NULL REFERENCES customers(id),
+      loan_no INTEGER NOT NULL,
+      given_amount INTEGER NOT NULL,
+      weekly_amount INTEGER NOT NULL,
+      total_weeks INTEGER NOT NULL,
+      paid INTEGER NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL,
+      closed_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS expenses (

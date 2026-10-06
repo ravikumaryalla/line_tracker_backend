@@ -26,12 +26,13 @@ Every endpoint except `/api/health` and `/api/auth/login` requires an admin's Be
 - `DELETE /api/users/:id` — delete an admin (not yourself, not the last one).
 - `GET  /api/villages` / `POST /api/villages { name }`
 - `GET  /api/customers?villageId=&search=`
-- `GET  /api/customers/:id` (includes payment timeline)
+- `GET  /api/customers/:id` (includes the current loan's payment timeline and `pastLoans`: earlier, cleared loans)
 - `GET  /api/customers/:id/payments`
 - `GET  /api/customers/:id/photo` — `{ photo }` as a data URI (404 if none); list/detail responses only carry `hasPhoto`
 - `POST /api/customers` — give money / create a new customer schedule: `{ name, phone, address, nominee, villageId, given, weekly, weeks, photo }` (`nominee`, `address`, `villageId` and `photo` are optional; `photo` is a `data:image/...` URI)
 - `PATCH /api/customers/:id` — edit contact/village details (not the given/weekly/weeks schedule): `{ name, phone, address, nominee, villageId, photo }` (`photo: null` removes it)
 - `POST /api/customers/:id/payments` — collect a payment (partials allowed): `{ amount, note }`
+- `POST /api/customers/:id/loans` — give a customer whose loan is cleared a new loan: `{ given, weekly, weeks }`. The cleared loan moves to `pastLoans` and the new one starts at week 1 (400 if the current loan still has a balance)
 - `GET  /api/expenses` / `POST /api/expenses { category, amount, note }`
 - `GET  /api/losses` / `POST /api/losses { customerName, village, remaining, recovered, reason }`
 - `GET  /api/dashboard/summary` — admin dashboard totals, week chart, village comparison

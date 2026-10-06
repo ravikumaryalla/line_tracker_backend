@@ -1,7 +1,7 @@
 const pool = require('./connection');
 
 // Deletion order respects the foreign keys between these tables. User accounts are kept.
-const TABLES = ['payments', 'customer_photos', 'expenses', 'losses', 'customers', 'villages'];
+const TABLES = ['payments', 'past_loans', 'customer_photos', 'expenses', 'losses', 'customers', 'villages'];
 
 async function clear() {
   const client = await pool.connect();
