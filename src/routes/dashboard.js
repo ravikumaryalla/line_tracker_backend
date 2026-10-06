@@ -42,9 +42,10 @@ router.get('/summary', async (req, res, next) => {
 
     const villageRows = (await pool.query('SELECT * FROM villages ORDER BY name')).rows;
     const villages = villageRows.map((v) => {
-      const vc = customers.filter((c) => c.village_id === v.id);
-      const vGiven = vc.reduce((s, c) => s + c.given_amount + pastOf(c).given, 0);
-      const vCollected = vc.reduce((s, c) => s + paidBy(c) + pastOf(c).paid, 0);
+      // Running loans only, matching the Villages screen.
+      const vc = customers.filter((c) => c.village_id === v.id && paidBy(c) < c.total_weeks * c.weekly_amount);
+      const vGiven = vc.reduce((s, c) => s + c.given_amount, 0);
+      const vCollected = vc.reduce((s, c) => s + paidBy(c), 0);
       return { name: v.name, given: vGiven, collected: vCollected };
     });
 

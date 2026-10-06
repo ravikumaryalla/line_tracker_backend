@@ -1,26 +1,29 @@
 const express = require('express');
 const pool = require('../db/connection');
-const { paidTotals, pastTotals } = require('../helpers');
+const { paidTotals } = require('../helpers');
 
 const router = express.Router();
 
-// paid / past: maps from paidTotals / pastTotals. Totals cover every loan, including cleared earlier ones.
-async function serializeVillage(v, paid, past) {
+// paid: map from paidTotals. Totals cover only running loans; customers whose loan is cleared
+// count towards customerCount but not activeCount or the money figures.
+async function serializeVillage(v, paid) {
   const customers = (await pool.query('SELECT * FROM customers WHERE village_id = $1', [v.id])).rows;
-  const pastOf = (c) => past.get(c.id) || { given: 0, paid: 0 };
-  const given = customers.reduce((s, c) => s + c.given_amount + pastOf(c).given, 0);
-  const collected = customers.reduce((s, c) => s + (paid.get(c.id) || 0) + pastOf(c).paid, 0);
+  const paidBy = (c) => paid.get(c.id) || 0;
+  const running = customers.filter((c) => paidBy(c) < c.total_weeks * c.weekly_amount);
+  const given = running.reduce((s, c) => s + c.given_amount, 0);
+  const collected = running.reduce((s, c) => s + paidBy(c), 0);
+  const pending = running.reduce((s, c) => s + c.total_weeks * c.weekly_amount - paidBy(c), 0);
   return {
     id: v.id, name: v.name,
-    customerCount: customers.length, given, collected, pending: Math.max(0, given - collected)
+    customerCount: customers.length, activeCount: running.length, given, collected, pending
   };
 }
 
 router.get('/', async (req, res, next) => {
   try {
     const villages = (await pool.query('SELECT * FROM villages ORDER BY name')).rows;
-    const [paid, past] = await Promise.all([paidTotals(pool), pastTotals(pool)]);
-    res.json(await Promise.all(villages.map((v) => serializeVillage(v, paid, past))));
+    const paid = await paidTotals(pool);
+    res.json(await Promise.all(villages.map((v) => serializeVillage(v, paid))));
   } catch (err) { next(err); }
 });
 
@@ -33,7 +36,7 @@ router.post('/', async (req, res, next) => {
     if (dupe) return res.status(409).json({ error: 'A village with that name already exists' });
 
     const { rows } = await pool.query('INSERT INTO villages (name) VALUES ($1) RETURNING *', [name]);
-    res.status(201).json(await serializeVillage(rows[0], new Map(), new Map()));
+    res.status(201).json(await serializeVillage(rows[0], new Map()));
   } catch (err) { next(err); }
 });
 

@@ -181,6 +181,29 @@ router.post('/:id/payments', async (req, res, next) => {
   }
 });
 
+// One earlier, cleared loan with its own week-by-week payment history.
+router.get('/:id/loans/:loanNo', async (req, res, next) => {
+  try {
+    const loan = (await pool.query(
+      `SELECT loan_no AS "loanNo", given_amount AS given, weekly_amount AS weekly, total_weeks AS "totalWeeks", paid,
+              TO_CHAR(started_at, 'DD Mon YYYY') AS "startedAt", TO_CHAR(closed_at, 'DD Mon YYYY') AS "closedAt"
+       FROM past_loans WHERE customer_id = $1 AND loan_no = $2`,
+      [req.params.id, req.params.loanNo]
+    )).rows[0];
+    if (!loan) return res.status(404).json({ error: 'Loan not found' });
+    const payments = (await pool.query(
+      "SELECT week_number, amount, TO_CHAR(paid_on, 'DD Mon YYYY') AS date FROM payments WHERE customer_id = $1 AND loan_no = $2 ORDER BY created_at",
+      [req.params.id, loan.loanNo]
+    )).rows;
+    const lastPaidWeek = payments.reduce((m, p) => Math.max(m, p.week_number), 0);
+    loan.timeline = serializeTimeline(
+      { totalWeeks: loan.totalWeeks, weekly: loan.weekly, isDone: true, weeksPaid: lastPaidWeek, lastPaidWeek, missedWeeks: [] },
+      payments
+    );
+    res.json(loan);
+  } catch (err) { next(err); }
+});
+
 // Give a customer whose loan is cleared a new loan. The cleared loan moves to past_loans and the
 // new one starts again from week 1; its payments are kept apart by loan_no.
 router.post('/:id/loans', async (req, res, next) => {
