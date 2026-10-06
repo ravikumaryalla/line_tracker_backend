@@ -37,3 +37,4 @@ Every endpoint except `/api/health` and `/api/auth/login` requires an admin's Be
 - `GET  /api/expenses` / `POST /api/expenses { category, amount, note }`
 - `GET  /api/losses` / `POST /api/losses { customerName, village, remaining, recovered, reason }`
 - `GET  /api/dashboard/summary` — admin dashboard totals, week chart, village comparison
+- `GET  /api/dashboard/week?offset=0` — one Monday–Sunday week (`offset` 1 = last week): collected with Mon–Sun `days`, expected from loans running that week, loans given/cleared, new customers, expenses, losses
