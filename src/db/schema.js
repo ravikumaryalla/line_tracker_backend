@@ -76,6 +76,15 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    -- Report weeks are started and ended by the admin, so a "week" can be one day or several.
+    CREATE TABLE IF NOT EXISTS report_weeks (
+      id SERIAL PRIMARY KEY,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ended_at TIMESTAMPTZ
+    );
+    -- Only one week can be running at a time.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_report_weeks_running ON report_weeks ((true)) WHERE ended_at IS NULL;
+
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,

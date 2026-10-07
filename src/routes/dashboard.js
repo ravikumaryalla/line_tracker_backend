@@ -60,38 +60,65 @@ router.get('/summary', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Every loan, current and past, with the date it started and the date it was cleared (null while running).
-// A current loan is cleared on the day of its last payment once it is fully paid.
+// Every loan, current and past, with the moment it started and the moment it was cleared (null while running).
+// A current loan is cleared at its last payment once it is fully paid.
 const ALL_LOANS = `
   WITH cur AS (
     SELECT c.weekly_amount AS weekly, c.given_amount AS given,
-           COALESCE(c.loan_started_at, c.created_at)::date AS started,
+           COALESCE(c.loan_started_at, c.created_at) AS started,
            CASE WHEN COALESCE(p.s, 0) >= c.total_weeks * c.weekly_amount THEN p.last_paid END AS cleared
     FROM customers c
-    LEFT JOIN (SELECT customer_id, loan_no, SUM(amount) s, MAX(paid_on) last_paid FROM payments GROUP BY customer_id, loan_no) p
+    LEFT JOIN (SELECT customer_id, loan_no, SUM(amount) s, MAX(created_at) last_paid FROM payments GROUP BY customer_id, loan_no) p
       ON p.customer_id = c.id AND p.loan_no = c.loan_no
   )
   SELECT weekly, given, started, cleared FROM cur
   UNION ALL
-  SELECT weekly_amount, given_amount, started_at::date, closed_at::date FROM past_loans`;
+  SELECT weekly_amount, given_amount, started_at, closed_at FROM past_loans`;
 
-// One Monday–Sunday week; offset 0 is this week, 1 last week, and so on.
+// The admin starts and ends each report week, so a week can be one day or several.
+router.post('/week/start', async (req, res, next) => {
+  try {
+    const running = (await pool.query('SELECT 1 FROM report_weeks WHERE ended_at IS NULL')).rows.length;
+    if (running) return res.status(409).json({ error: 'A week is already running' });
+    await pool.query('INSERT INTO report_weeks DEFAULT VALUES');
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    // Two taps at once: the unique index lets only one through.
+    if (err.code === '23505') return res.status(409).json({ error: 'A week is already running' });
+    next(err);
+  }
+});
+
+router.post('/week/end', async (req, res, next) => {
+  try {
+    const ended = await pool.query('UPDATE report_weeks SET ended_at = now() WHERE ended_at IS NULL');
+    if (!ended.rowCount) return res.status(409).json({ error: 'No week is running' });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// One saved week; offset 0 is the latest (running or not), 1 the one before, and so on.
 router.get('/week', async (req, res, next) => {
   try {
-    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-    // Dates go back and forth as text so the pg driver doesn't shift them by the server's timezone.
+    const total = Number((await pool.query('SELECT COUNT(*) c FROM report_weeks')).rows[0].c);
+    if (!total) return res.json({ offset: 0, none: true, total: 0 });
+    const offset = Math.min(total - 1, Math.max(0, parseInt(req.query.offset, 10) || 0));
+
+    // start/end are the query bounds as text; startedAt/endedAt go out as ISO times for the app to show in local time.
     const w = (await pool.query(
-      `SELECT TO_CHAR(s, 'YYYY-MM-DD') AS start, TO_CHAR(s + 6, 'YYYY-MM-DD') AS "end",
-              TO_CHAR(s, 'DD Mon') || ' – ' || TO_CHAR(s + 6, 'DD Mon') AS label
-       FROM (SELECT date_trunc('week', CURRENT_DATE)::date - 7 * $1::int AS s) x`,
+      `SELECT id, ended_at IS NULL AS running, started_at AS "startedAt", ended_at AS "endedAt",
+              started_at::text AS start, COALESCE(ended_at, now())::text AS "end",
+              (COALESCE(ended_at, now())::date - started_at::date + 1)::int AS "dayCount"
+       FROM report_weeks ORDER BY started_at DESC OFFSET $1 LIMIT 1`,
       [offset]
     )).rows[0];
     const range = [w.start, w.end];
 
     const days = (await pool.query(
-      `SELECT TO_CHAR(d, 'Dy') AS day, d::date = CURRENT_DATE AS "isToday", COALESCE(SUM(p.amount), 0)::int AS amount
-       FROM generate_series($1::date, $2::date, interval '1 day') d
-       LEFT JOIN payments p ON p.paid_on = d::date
+      `SELECT TO_CHAR(d, 'Dy') AS day, TO_CHAR(d, 'DD Mon') AS date, d::date = CURRENT_DATE AS "isToday",
+              COALESCE(SUM(p.amount), 0)::int AS amount
+       FROM generate_series($1::timestamptz::date, $2::timestamptz::date, interval '1 day') d
+       LEFT JOIN payments p ON p.created_at::date = d::date AND p.created_at BETWEEN $1 AND $2
        GROUP BY d ORDER BY d`,
       range
     )).rows;
@@ -99,20 +126,20 @@ router.get('/week', async (req, res, next) => {
 
     // A loan is expected to pay in a week if it started before the week and wasn't cleared before it.
     const loans = (await pool.query(
-      `SELECT COALESCE(SUM(given) FILTER (WHERE started BETWEEN $1::date AND $2::date), 0)::int AS given,
-              COUNT(*) FILTER (WHERE started BETWEEN $1::date AND $2::date)::int AS "loansGiven",
-              COALESCE(SUM(weekly) FILTER (WHERE started < $1::date AND (cleared IS NULL OR cleared >= $1::date)), 0)::int AS expected,
-              COUNT(*) FILTER (WHERE cleared BETWEEN $1::date AND $2::date)::int AS "loansCleared"
+      `SELECT COALESCE(SUM(given) FILTER (WHERE started BETWEEN $1 AND $2), 0)::int AS given,
+              COUNT(*) FILTER (WHERE started BETWEEN $1 AND $2)::int AS "loansGiven",
+              COALESCE(SUM(weekly) FILTER (WHERE started < $1 AND (cleared IS NULL OR cleared >= $1)), 0)::int AS expected,
+              COUNT(*) FILTER (WHERE cleared BETWEEN $1 AND $2)::int AS "loansCleared"
        FROM (${ALL_LOANS}) loans`,
       range
     )).rows[0];
 
     const one = async (sql) => (await pool.query(sql, range)).rows[0].v;
-    const newCustomers = await one('SELECT COUNT(*)::int v FROM customers WHERE created_at::date BETWEEN $1::date AND $2::date');
-    const expenses = await one('SELECT COALESCE(SUM(amount), 0)::int v FROM expenses WHERE created_at::date BETWEEN $1::date AND $2::date');
-    const losses = await one('SELECT COALESCE(SUM(remaining - recovered), 0)::int v FROM losses WHERE created_at::date BETWEEN $1::date AND $2::date');
+    const newCustomers = await one('SELECT COUNT(*)::int v FROM customers WHERE created_at BETWEEN $1 AND $2');
+    const expenses = await one('SELECT COALESCE(SUM(amount), 0)::int v FROM expenses WHERE created_at BETWEEN $1 AND $2');
+    const losses = await one('SELECT COALESCE(SUM(remaining - recovered), 0)::int v FROM losses WHERE created_at BETWEEN $1 AND $2');
 
-    res.json({ offset, ...w, days, collected, ...loans, newCustomers, expenses, losses });
+    res.json({ offset, total, number: total - offset, ...w, days, collected, ...loans, newCustomers, expenses, losses });
   } catch (err) { next(err); }
 });
 

@@ -37,4 +37,6 @@ Every endpoint except `/api/health` and `/api/auth/login` requires an admin's Be
 - `GET  /api/expenses` / `POST /api/expenses { category, amount, note }`
 - `GET  /api/losses` / `POST /api/losses { customerName, village, remaining, recovered, reason }`
 - `GET  /api/dashboard/summary` — admin dashboard totals, week chart, village comparison
-- `GET  /api/dashboard/week?offset=0` — one Monday–Sunday week (`offset` 1 = last week): collected with Mon–Sun `days`, expected from loans running that week, loans given/cleared, new customers, expenses, losses
+- `POST /api/dashboard/week/start` — start a report week now (409 if one is already running)
+- `POST /api/dashboard/week/end` — end the running report week now (409 if none is running)
+- `GET  /api/dashboard/week?offset=0` — one admin-started report week, newest first (`offset` 1 = the one before; `{ none: true }` before the first is started). A week runs from its start to its end (or now while running), so it can be one day or several: collected with per-day `days`, expected from loans running that week, loans given/cleared, new customers, expenses, losses, plus `number`, `total`, `running`, `startedAt`, `endedAt` (ISO, `endedAt` null while running), `dayCount`
